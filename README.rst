@@ -2,6 +2,18 @@
 zuup
 ====
 
+.. image:: https://travis-ci.org/sileht/zuup.png?branch=master
+   :target: https://travis-ci.org/sileht/zuup
+
+.. image:: https://img.shields.io/pypi/v/zuup.svg
+   :target: https://pypi.python.org/pypi/zuup/
+   :alt: Latest Version
+
+.. image:: https://img.shields.io/pypi/dm/zuup.svg
+   :target: https://pypi.python.org/pypi/zuup/
+   :alt: Downloads
+
+
 Command line to consult Openstck zuul status
 
 * Free software: Apache license
