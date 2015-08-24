@@ -14,7 +14,7 @@ zuup
    :alt: Downloads
 
 
-Command line to consult Openstck zuul status
+Command line to consult Openstack zuul status
 
 * Free software: Apache license
 * Documentation: http://zuup.readthedocs.org
