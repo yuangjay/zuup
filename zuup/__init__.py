@@ -223,7 +223,8 @@ def get_log_url(zuul_review, job):
     return job.get('url', '') or ''
 
 
-def pretty_review(pipeline, zuul_review, review, short_output=False):
+def pretty_review(pipeline, zuul_review, review, short_output=False,
+                  running_output=False):
     remaining_time = zuul_review.get('remaining_time')
     enqueue_time = zuul_review.get('enqueue_time')
 
@@ -256,6 +257,8 @@ def pretty_review(pipeline, zuul_review, review, short_output=False):
             output += get_progress_bar_review(job)
         if not short_output or (short_output and
                                 job.get('result') == 'FAILURE'):
+            if (job.get('result') == 'SUCCESS' or not url) and running_output:
+                continue
             details += "\n - %s %-8s %s %s" % (
                 get_progress_bar_job(job),
                 color(pretty_time(remaining_time, delta=True,
@@ -268,7 +271,7 @@ def pretty_review(pipeline, zuul_review, review, short_output=False):
     return output
 
 
-def get_zuul_review(reviews, short_output=False):
+def get_zuul_review(reviews, short_output=False, running_output=False):
     r = requests.get('http://zuul.openstack.org/status.json')
     if r.status_code != 200:
         raise UnexceptedException("Zuul request failed: \n%s" % r.text)
@@ -282,7 +285,7 @@ def get_zuul_review(reviews, short_output=False):
                     if zuul_review['url'] in reviews:
                         output = pretty_review(pipeline, zuul_review,
                                                reviews[zuul_review['url']],
-                                               short_output)
+                                               short_output, running_output)
                         yield ((pipeline['name'], zuul_review['url']),
                                (time.time(), output))
 
@@ -294,9 +297,9 @@ def normalize_changes(changes):
                 "https://review.openstack.org/", '').split('/')[0]
 
 
-def get_reviews(username, changes, projects, short_output):
+def get_reviews(username, changes, projects, short_output, running_output):
     reviews = get_gerrit_reviews(username, changes, projects)
-    return dict(get_zuul_review(reviews, short_output))
+    return dict(get_zuul_review(reviews, short_output, running_output))
 
 
 def zuup():
@@ -321,6 +324,8 @@ def zuup():
                         help="current repo changes", default=[])
     parser.add_argument('-s', dest='short', action='store_true',
                         help="short output")
+    parser.add_argument('-R', dest='running', action='store_true',
+                        help="show only failed and running job")
     parser.add_argument('-j', dest='job',
                         help="show log of a job of a change")
 
@@ -342,7 +347,7 @@ def zuup():
     while True:
         try:
             new_reviews = get_reviews(args.username, changes, projects,
-                                      args.short)
+                                      args.short, args.running)
         except Exception as e:
             now = "fail: %s" % e
         else:
