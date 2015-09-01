@@ -368,7 +368,7 @@ class Zuup(object):
                 if daemon and not no_reviews_exit:
                     os.system('clear')
                 if daemon:
-                    print()
+                    print("")
                 print(color("No reviews found in zuul", mod='1'))
                 if no_reviews_exit:
                     return
