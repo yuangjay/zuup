@@ -114,21 +114,6 @@ def command(cmd, min_lines=0):
     return lines
 
 
-def get_local_reponame():
-    url = command("git config --local --get remote.gerrit.url")[0]
-    return "/".join(url.split('/')[-2:]).replace('.git', '')
-
-
-def get_local_changeids():
-    commits = command("git log --pretty=tformat:'%H' gerrit/master..HEAD")
-    changeids = set()
-    for commit in commits:
-        changeid = command("git show %s | "
-                           "sed -n '/^Change-Id: / { s/.*: //;p;}'" % commit)
-        changeids.add(changeid)
-    return changeids
-
-
 def gerrit_query(query):
     cmd = ("ssh -x -p 29418 review.openstack.org "
            "'gerrit query status:open %s --format json'")
@@ -138,31 +123,6 @@ def gerrit_query(query):
         info = json.loads(line)
         if 'type' not in info:
             reviews[info["url"]] = info
-    return reviews
-
-
-def get_gerrit_reviews(username, changes, projects):
-    reviews = {}
-
-    if username:
-        username = ' owner:%s' % username
-    else:
-        username = ''
-
-    for change in changes:
-        query = ' change:%s' % change
-        reviews.update(gerrit_query(query))
-
-    for project in projects:
-        project = get_full_project(project)
-        project = ' project:%s' % project
-        query = "%s %s" % (username, project)
-        reviews.update(gerrit_query(query))
-    else:
-        if username:
-            query = username
-            reviews.update(gerrit_query(query))
-
     return reviews
 
 
@@ -223,168 +183,211 @@ def get_log_url(zuul_review, job):
     return job.get('url', '') or ''
 
 
-def pretty_review(pipeline, zuul_review, review, short_output=False,
-                  running_output=False):
-    remaining_time = zuul_review.get('remaining_time')
-    enqueue_time = zuul_review.get('enqueue_time')
+class Zuup(object):
+    def __init__(self):
+        self.args = self.parse_args()
 
-    output = ""
-    if not short_output:
-        output += "\n"
-    output += "[%s] %s[%s]: %s" % (
-        color(review['project'], 37, mod=1),
-        color(pipeline['name'], 37),
-        len(zuul_review.get('items_behind')),
-        color(zuul_review.get('url'), 33),
-    )
-    if not short_output:
-        output += "\n"
-    output += " %s %s/%s " % (
-        color(review['commitMessage'].split('\n')[0], 36),
-        pretty_time(enqueue_time),
-        pretty_time(remaining_time, delta=True),
-    )
+    @staticmethod
+    def parse_args():
+        parser = argparse.ArgumentParser()
+        parser.add_argument('-D', dest='daemon_exit', action='store_true',
+                            help="Daemonize and exit if no more reviews")
+        parser.add_argument('-d', dest='daemon', action='store_true',
+                            help="Daemonize")
+        parser.add_argument('-w', dest='delay', default=60, type=int,
+                            help="refresh delay")
+        parser.add_argument('-e', dest='expiration', default=10, type=int,
+                            help="review expiration in deamon mode")
+        parser.add_argument('-u', dest='username',
+                            help="Username")
+        parser.add_argument('-p', dest='projects', action='append',
+                            help="Projects", default=[])
+        parser.add_argument('-c', dest='changes', action='append',
+                            help="changes", default=[])
+        parser.add_argument('-q', dest='queue', action='append',
+                            help="queues", default=[])
+        parser.add_argument('-l', dest='local', action='store_true',
+                            help="local changes", default=[])
+        parser.add_argument('-r', dest='repo', action='store_true',
+                            help="current repo changes", default=[])
+        parser.add_argument('-s', dest='short', action='store_true',
+                            help="short output")
+        parser.add_argument('-R', dest='running', action='store_true',
+                            help="show only failed and running job")
+        parser.add_argument('-j', dest='job',
+                            help="show log of a job of a change")
 
-    details = ""
-    jobs = zuul_review.get('jobs')
-    for job in jobs:
-        remaining_time = job.get('remaining_time')
-        finished = job.get('result') in ['SUCCESS', 'FAILURE']
-        url = get_log_url(zuul_review, job)
+        return parser.parse_args()
 
-        voting_mod = None if bool(job.get('voting')) else 2
-        if short_output:
-            output += get_progress_bar_review(job)
-        if not short_output or (short_output and
-                                job.get('result') == 'FAILURE'):
-            if (job.get('result') == 'SUCCESS' or not url) and running_output:
-                continue
-            details += "\n - %s %-8s %s %s" % (
-                get_progress_bar_job(job),
-                color(pretty_time(remaining_time, delta=True,
-                                  finished=finished), mod=voting_mod),
-                color(job['name'], mod=voting_mod),
-                color(url, 33, mod=voting_mod)
-            )
-
-    output += details
-    return output
-
-
-def get_zuul_review(reviews, short_output=False, running_output=False):
-    r = requests.get('http://zuul.openstack.org/status.json')
-    if r.status_code != 200:
-        raise UnexceptedException("Zuul request failed: \n%s" % r.text)
-
-    data = r.json()
-    for pipeline in data['pipelines']:
-        #    print(pipeline['name'])
-        for queue in pipeline['change_queues']:
-            for zuul_reviews in queue['heads']:
-                for zuul_review in zuul_reviews:
-                    if zuul_review['url'] in reviews:
-                        output = pretty_review(pipeline, zuul_review,
-                                               reviews[zuul_review['url']],
-                                               short_output, running_output)
-                        yield ((pipeline['name'], zuul_review['url']),
-                               (time.time(), output))
-
-
-def normalize_changes(changes):
-    for change in changes:
-        yield change.replace(
+    @staticmethod
+    def normalize_changeid(change):
+        return change.replace(
             "https://review.openstack.org/#/c/", '').replace(
                 "https://review.openstack.org/", '').split('/')[0]
 
+    @staticmethod
+    def get_local_changeids():
+        commits = command("git log --pretty=tformat:'%H' gerrit/master..HEAD")
+        changeids = set()
+        for commit in commits:
+            changeid = command("git show %s | sed -n "
+                               "'/^Change-Id: / { s/.*: //;p;}'" % commit)
+            changeids.add(changeid)
+        return changeids
 
-def get_reviews(username, changes, projects, short_output, running_output):
-    reviews = get_gerrit_reviews(username, changes, projects)
-    return dict(get_zuul_review(reviews, short_output, running_output))
+    @staticmethod
+    def get_local_reponame():
+        url = command("git config --local --get remote.gerrit.url")[0]
+        return "/".join(url.split('/')[-2:]).replace('.git', '')
 
+    def get_reviews_from_gerrit(self):
+        reviews = {}
 
-def zuup():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-D', dest='daemon_exit', action='store_true',
-                        help="Daemonize and exit if no more reviews")
-    parser.add_argument('-d', dest='daemon', action='store_true',
-                        help="Daemonize")
-    parser.add_argument('-w', dest='delay', default=60, type=int,
-                        help="refresh delay")
-    parser.add_argument('-e', dest='expiration', default=10, type=int,
-                        help="review expiration in deamon mode")
-    parser.add_argument('-u', dest='username',
-                        help="Username")
-    parser.add_argument('-p', dest='projects', action='append',
-                        help="Projects", default=[])
-    parser.add_argument('-c', dest='changes', action='append',
-                        help="changes", default=[])
-    parser.add_argument('-l', dest='local', action='store_true',
-                        help="local changes", default=[])
-    parser.add_argument('-r', dest='repo', action='store_true',
-                        help="current repo changes", default=[])
-    parser.add_argument('-s', dest='short', action='store_true',
-                        help="short output")
-    parser.add_argument('-R', dest='running', action='store_true',
-                        help="show only failed and running job")
-    parser.add_argument('-j', dest='job',
-                        help="show log of a job of a change")
-
-    args = parser.parse_args()
-
-    daemon = args.daemon or args.daemon_exit
-    no_reviews_exit = args.daemon_exit or not args.daemon
-
-    changes = set(args.changes)
-    if args.local:
-        changes.update(get_local_changeids())
-    changes = normalize_changes(changes)
-
-    projects = set(args.projects)
-    if args.repo:
-        projects.add(get_local_reponame())
-
-    all_reviews = {}
-    while True:
-        try:
-            new_reviews = get_reviews(args.username, changes, projects,
-                                      args.short, args.running)
-        except Exception as e:
-            now = "fail: %s" % e
+        if self.args.username:
+            username = ' owner:%s' % self.args.username
         else:
-            now = str(datetime.datetime.now())[:-7]
-            if args.expiration <= 0:
-                all_reviews = {}
-            all_reviews.update(new_reviews)
+            username = ''
 
-        if args.expiration > 0:
-            for url, (last_update, review) in list(all_reviews.items()):
-                if time.time() - last_update >= 60 * args.expiration:
-                    del all_reviews[url]
+        changes = set(self.args.changes)
+        if self.args.local:
+            changes.update(self.get_local_changeids())
+        for change in changes:
+            change = self.normalize_changeid(change)
+            query = ' change:%s' % change
+            reviews.update(gerrit_query(query))
 
-        if not all_reviews:
-            if daemon and not no_reviews_exit:
+        projects = set(self.args.projects)
+        if self.args.repo:
+            projects.add(self.get_local_reponame())
+
+        for project in projects:
+            project = get_full_project(project)
+            project = ' project:%s' % project
+            query = "%s %s" % (username, project)
+            reviews.update(gerrit_query(query))
+        else:
+            if username:
+                query = username
+                reviews.update(gerrit_query(query))
+
+        return reviews
+
+    def pretty_review(self, pipeline, zuul_review, review):
+        remaining_time = zuul_review.get('remaining_time')
+        enqueue_time = zuul_review.get('enqueue_time')
+
+        output = ""
+        if not self.args.short:
+            output += "\n"
+        output += "[%s] %s[%s]: %s" % (
+            color(review['project'], 37, mod=1),
+            color(pipeline['name'], 37),
+            len(zuul_review.get('items_behind')),
+            color(zuul_review.get('url'), 33),
+        )
+        if not self.args.short:
+            output += "\n"
+        output += " %s %s/%s " % (
+            color(review['commitMessage'].split('\n')[0], 36),
+            pretty_time(enqueue_time),
+            pretty_time(remaining_time, delta=True),
+        )
+
+        details = ""
+        jobs = zuul_review.get('jobs')
+        for job in jobs:
+            remaining_time = job.get('remaining_time')
+            finished = job.get('result') in ['SUCCESS', 'FAILURE']
+            url = get_log_url(zuul_review, job)
+
+            voting_mod = None if bool(job.get('voting')) else 2
+            if self.args.short:
+                output += get_progress_bar_review(job)
+            if not self.args.short or (self.args.short and
+                                       job.get('result') == 'FAILURE'):
+                if self.args.running and (job.get('result') == 'SUCCESS'
+                                          or not url):
+                    continue
+                details += "\n - %s %-8s %s %s" % (
+                    get_progress_bar_job(job),
+                    color(pretty_time(remaining_time, delta=True,
+                                      finished=finished), mod=voting_mod),
+                    color(job['name'], mod=voting_mod),
+                    color(url, 33, mod=voting_mod)
+                )
+
+        output += details
+        return output
+
+    def get_zuul_reviews(self, gerrit_reviews):
+        r = requests.get('http://zuul.openstack.org/status.json')
+        if r.status_code != 200:
+            raise UnexceptedException("Zuul request failed: \n%s" % r.text)
+
+        data = r.json()
+        for pipeline in data['pipelines']:
+            #    print(pipeline['name'])
+            if (self.args.queue and pipeline['name'] not in self.args.queue):
+                continue
+            for queue in pipeline['change_queues']:
+                for zuul_reviews in queue['heads']:
+                    for zuul_review in zuul_reviews:
+                        if zuul_review['url'] in gerrit_reviews:
+                            output = self.pretty_review(
+                                pipeline, zuul_review,
+                                gerrit_reviews[zuul_review['url']])
+                            yield ((pipeline['name'], zuul_review['url']),
+                                   (time.time(), output))
+
+    def get_reviews(self):
+        reviews = self.get_reviews_from_gerrit()
+        return dict(self.get_zuul_reviews(reviews))
+
+    def run(self):
+        daemon = self.args.daemon or self.args.daemon_exit
+        no_reviews_exit = self.args.daemon_exit or not self.args.daemon
+
+        all_reviews = {}
+        while True:
+            try:
+                new_reviews = self.get_reviews()
+            except Exception as e:
+                now = "fail: %s" % e
+            else:
+                now = str(datetime.datetime.now())[:-7]
+                if self.args.expiration <= 0:
+                    all_reviews = {}
+                all_reviews.update(new_reviews)
+
+            if self.args.expiration > 0:
+                for url, (last_update, review) in list(all_reviews.items()):
+                    if time.time() - last_update >= 60 * self.args.expiration:
+                        del all_reviews[url]
+
+            if not all_reviews:
+                if daemon and not no_reviews_exit:
+                    os.system('clear')
+                if daemon:
+                    print()
+                print(color("No reviews found in zuul", mod='1'))
+                if no_reviews_exit:
+                    return
+            elif daemon:
                 os.system('clear')
-            if daemon:
-                print()
-            print(color("No reviews found in zuul", mod='1'))
-            if no_reviews_exit:
-                return
-        elif daemon:
-            os.system('clear')
 
-        for data in all_reviews.values():
-            print(data[1])
+            for data in all_reviews.values():
+                print(data[1])
 
-        if not daemon:
-            break
+            if not daemon:
+                break
 
-        wait_input_or_timeout(
-            args.delay, "\nLast update %s" % now, ", refreshing ...")
+            wait_input_or_timeout(
+                self.args.delay, "\nLast update %s" % now, ", refreshing ...")
 
 
 def main():
     try:
-        zuup()
+        Zuup().run()
     except KeyboardInterrupt:
         sys.stdout.write("\nExiting...\n")
         sys.stdout.flush()
