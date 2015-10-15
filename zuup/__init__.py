@@ -116,7 +116,7 @@ def command(cmd, min_lines=0):
 
 def gerrit_query(query):
     cmd = ("ssh -x -p 29418 review.openstack.org "
-           "'gerrit query status:open %s --format json'")
+           "'gerrit query status:open %s --current-patch-set --format json'")
     cmd = cmd % query
     reviews = {}
     for line in command(cmd, 2):
@@ -171,16 +171,6 @@ def get_progress_bar_review(job):
         return color('F', 31, voting_mod)
     else:
         return color('P', 33, voting_mod)
-
-
-def get_log_url(zuul_review, job):
-    if job.get('result') in ['SUCCESS', 'FAILURE']:
-        if 'parameters' in job:
-            return ('http://logs.openstack.org/%s' %
-                    job['parameters']['LOG_PATH'])
-        else:
-            return job['url']
-    return job.get('url', '') or ''
 
 
 class Zuup(object):
@@ -269,7 +259,6 @@ class Zuup(object):
             if username:
                 query = username
                 reviews.update(gerrit_query(query))
-
         return reviews
 
     def pretty_review(self, pipeline, zuul_review, review):
@@ -298,7 +287,7 @@ class Zuup(object):
         for job in jobs:
             remaining_time = job.get('remaining_time')
             finished = job.get('result') in ['SUCCESS', 'FAILURE']
-            url = get_log_url(zuul_review, job)
+            url = self.get_log_url(review, job)
 
             voting_mod = None if bool(job.get('voting')) else 2
             if self.args.short:
@@ -318,6 +307,21 @@ class Zuup(object):
 
         output += details
         return output
+
+    @staticmethod
+    def get_log_url(review, job):
+        if job.get('result') in ['SUCCESS', 'FAILURE']:
+            info = dict(
+                name=job["name"],
+                pipeline=job["pipeline"],
+                ref=review["currentPatchSet"]["ref"].replace(
+                    "refs/changes/", ""),
+                uuid=job["uuid"][:7],
+            )
+            return ('http://logs.openstack.org/%(ref)s'
+                    '/%(pipeline)s/%(name)s/%(uuid)s' % info)
+        else:
+            return job.get('url', '') or ''
 
     def get_zuul_reviews(self, gerrit_reviews):
         r = requests.get('http://zuul.openstack.org/status.json')
@@ -349,11 +353,14 @@ class Zuup(object):
 
         all_reviews = {}
         while True:
+            new_reviews = self.get_reviews()
             try:
                 new_reviews = self.get_reviews()
             except Exception as e:
+                failure = True
                 now = "fail: %s" % e
             else:
+                failure = False
                 now = str(datetime.datetime.now())[:-7]
                 if self.args.expiration <= 0:
                     all_reviews = {}
@@ -370,6 +377,8 @@ class Zuup(object):
                 if daemon:
                     print("")
                 print(color("No reviews found in zuul", mod='1'))
+                if failure:
+                    print(now)
                 if no_reviews_exit:
                     return
             elif daemon:
