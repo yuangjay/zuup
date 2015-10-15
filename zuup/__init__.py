@@ -354,7 +354,6 @@ class Zuup(object):
 
         all_reviews = {}
         while True:
-            new_reviews = self.get_reviews()
             try:
                 new_reviews = self.get_reviews()
             except Exception as e:
