@@ -221,7 +221,8 @@ class Zuup(object):
         changeids = set()
         for commit in commits:
             changeid = command("git show %s | sed -n "
-                               "'/^Change-Id: / { s/.*: //;p;}'" % commit)
+                               "'s/[[:space:]]*Change-Id: //p'" % commit,
+                               min_lines=1)[0]
             changeids.add(changeid)
         return changeids
 
