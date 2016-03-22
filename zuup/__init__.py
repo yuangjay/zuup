@@ -87,8 +87,7 @@ def wait_input_or_timeout(timeout, prompt1, prompt2):
 def get_full_project(project):
     aliases = {'openstack-dev': ['devstack', 'hacking', 'grenade',
                                  'oslo-cookiecutter', 'pbr',
-                                 'bashate', 'cookiecutter'],
-               'stackforge': ['gnocchi', 'pecan', 'murano', 'solum', 'rally']}
+                                 'bashate', 'cookiecutter']}
     for namespace in aliases:
         if project in aliases[namespace]:
             return namespace + "/" + project
