@@ -321,7 +321,10 @@ class Zuup(object):
             return ('http://logs.openstack.org/%(ref)s'
                     '/%(pipeline)s/%(name)s/%(uuid)s' % info)
         else:
-            return job.get('url', '').replace('telnet://', 'tcp:') or ''
+            url = job.get('url')
+            if url:
+                return url.replace('telnet://', 'tcp:')
+            return ''
 
     def get_zuul_reviews(self, gerrit_reviews):
         r = requests.get('http://zuul.openstack.org/status.json')
