@@ -115,7 +115,7 @@ def command(cmd, min_lines=0):
 
 def gerrit_query(query):
     cmd = ("ssh -x -p 29418 review.openstack.org "
-           "'gerrit query status:open %s --current-patch-set --format json'")
+           "'gerrit query %s --current-patch-set --format json'")
     cmd = cmd % query
     reviews = {}
     for line in command(cmd, 2):
@@ -323,7 +323,7 @@ class Zuup(object):
         else:
             url = job.get('url')
             if url:
-                return url.replace('telnet://', 'tcp:')
+                return url.replace('telnet://', '| socat - tcp:')
             return ''
 
     def get_zuul_reviews(self, gerrit_reviews):
