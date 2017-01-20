@@ -181,8 +181,9 @@ class Zuup(object):
         parser = argparse.ArgumentParser()
         parser.add_argument('-D', dest='daemon_exit', action='store_true',
                             help="Daemonize and exit if no more reviews")
-        parser.add_argument('-d', dest='daemon', action='store_true',
-                            help="Daemonize")
+        parser.add_argument('-d', dest='daemon', action='store_false',
+                            default=True,
+                            help="Don't daemonize")
         parser.add_argument('-w', dest='delay', default=60, type=int,
                             help="refresh delay")
         parser.add_argument('-e', dest='expiration', default=10, type=int,
@@ -196,9 +197,9 @@ class Zuup(object):
         parser.add_argument('-q', dest='queue', action='append',
                             help="queues", default=[])
         parser.add_argument('-l', dest='local', action='store_true',
-                            help="local changes", default=[])
+                            help="local changes (deprecated and ignored)")
         parser.add_argument('-r', dest='repo', action='store_true',
-                            help="current repo changes", default=[])
+                            help="current repo changes")
         parser.add_argument('-s', dest='short', action='store_true',
                             help="short output")
         parser.add_argument('-R', dest='running', action='store_true',
@@ -239,7 +240,7 @@ class Zuup(object):
             username = ''
 
         changes = set(self.args.changes)
-        if self.args.local:
+        if not changes:
             changes.update(self.get_local_changeids())
         for change in changes:
             change = self.normalize_changeid(change)
