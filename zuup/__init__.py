@@ -206,6 +206,8 @@ class Zuup(object):
                             help="show only failed and running job")
         parser.add_argument('-j', dest='job',
                             help="show log of a job of a change")
+        parser.add_argument('-n', dest='nonvoting', action="store_true",
+                            help="show nonvoting job")
 
         return parser.parse_args()
 
@@ -297,6 +299,8 @@ class Zuup(object):
                                        job.get('result') == 'FAILURE'):
                 if self.args.running and (job.get('result') == 'SUCCESS'
                                           or not url):
+                    continue
+                if not self.args.nonvoting and not bool(job.get('voting')):
                     continue
                 details += "\n - %s %-8s %s %s" % (
                     get_progress_bar_job(job),
