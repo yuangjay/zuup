@@ -114,7 +114,7 @@ def command(cmd, min_lines=0):
 
 
 def gerrit_query(query):
-    cmd = ("ssh -x -p 29418 review.openstack.org "
+    cmd = ("ssh -x -p 29418 gerrit.ext.net.nokia.com "
            "'gerrit query %s --current-patch-set --format json'")
     cmd = cmd % query
     reviews = {}
@@ -214,8 +214,8 @@ class Zuup(object):
     @staticmethod
     def normalize_changeid(change):
         return change.replace(
-            "https://review.openstack.org/#/c/", '').replace(
-                "https://review.openstack.org/", '').split('/')[0]
+            "https://gerrit.ext.net.nokia.com/#/c/", '').replace(
+                "https://gerrit.ext.net.nokia.com/", '').split('/')[0]
 
     @staticmethod
     def get_local_changeids():
@@ -332,7 +332,7 @@ class Zuup(object):
             return ''
 
     def get_zuul_reviews(self, gerrit_reviews):
-        r = requests.get('http://zuul.openstack.org/status.json')
+        r = requests.get('http://zuule1.dynamic.nsn-net.net/status.json')
         if r.status_code != 200:
             raise UnexceptedException("Zuul request failed: \n%s" % r.text)
 
